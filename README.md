@@ -1,16 +1,21 @@
-## Disclaimer: Use of Unaudited Code for Educational Purposes Only
-This code is provided strictly for educational purposes and has not undergone any formal security audit. 
-It may contain errors, vulnerabilities, or other issues that could pose risks to the integrity of your system or data.
+## Food Chain System Smart Contract Overview
 
-By using this code, you acknowledge and agree that:
-- No Warranty: The code is provided "as is" without any warranty of any kind, either express or implied. The entire risk as to the quality and performance of the code is with you.
-- Educational Use Only: This code is intended solely for educational and learning purposes. It is not intended for use in any mission-critical or production systems.
-- No Liability: In no event shall the authors or copyright holders be liable for any claim, damages, or other liability, whether in an action of contract, tort, or otherwise, arising from, out of, or in connection with the use or performance of this code.
-- Security Risks: The code may not have been tested for security vulnerabilities. It is your responsibility to conduct a thorough security review before using this code in any sensitive or production environment.
-- No Support: The authors of this code may not provide any support, assistance, or updates. You are using the code at your own risk and discretion.
+The "food_chain_system" module is a smart contract written in the Move programming language, designed to facilitate a decentralized food chain system. It introduces functionalities for managing products, consumers, complaints, and dispute resolutions within the food supply chain. Below is a detailed documentation of its components, purpose, features, setup, and interaction.
 
-Before using this code, it is recommended to consult with a qualified professional and perform a comprehensive security assessment. By proceeding to use this code, you agree to assume all associated risks and responsibilities.
+## Purpose:
+The primary purpose of the "food_chain_system" module is to establish a transparent and efficient food supply chain system on a decentralized platform. It aims to ensure trust, fairness, and accountability among suppliers and consumers by providing mechanisms for product listing, ordering, complaints filing, and dispute resolution.
 
+## Features:
+1. **Product Management:** Suppliers can create new products for sale, specifying attributes such as description, quality, price, and duration. Consumers can view and order available products.
+2. **Consumer Management:** Suppliers can add consumers with specific requirements for products, enabling targeted marketing and personalized offerings.
+3. **Order Handling:** Consumers can place orders for products, and suppliers can choose consumers to fulfill orders and process payments.
+4. **Complaints Handling:** Consumers can file complaints against suppliers for issues such as product quality or non-delivery within the specified deadline.
+5. **Dispute Resolution:** An admin or arbitrator can resolve disputes between consumers and suppliers, ensuring fair outcomes and appropriate actions.
+
+## Interaction:
+After setting up the environment and deploying the smart contract, users can interact with it through various CLI commands. These commands include creating new products, adding consumers, placing orders, filing complaints, and resolving disputes. Each interaction follows a specific protocol, involving parameters such as product IDs, descriptions, quantities, and timestamps.
+
+Overall, the "food_chain_system" smart contract module provides a robust framework for establishing and managing a decentralized food supply chain system. It promotes transparency, fairness, and accountability while ensuring the smooth flow of products from suppliers to consumers.
 ## Setup
 
 ### Prerequisites
@@ -195,122 +200,3 @@ After the contract is published we need to extract some object ids from the outp
 - `BASE_COIN_TYPE` - the type of the SUI coin, default to `0x2::sui::SUI`
 - `QUOTE_COIN_TYPE` - the type of the quote coin that we deployed for the sake of this tutorial. The coin is `WBTC` in the `wbtc` module in the `$PACKAGE_ID` package. So the value will look like this: `<PACKAGE_ID>::wbtc::WBTC`
 - `WBTC_TREASURY_CAP_ID` it's the treasury cap id that is needed for token mint operations. In the publish output you should look for the object with `objectType` `0x2::coin::TreasuryCap<$PACKAGE_ID::wbtc::WBTC>` (replace `$PACKAGE_ID` with the actual package id) and this object also has `objectId` - that's the value that we are looking for.
-
-## Interact with the contract
-
-### Create pool
-
-Now we create a pool:
-```
-sui client call --package $PACKAGE_ID  --module book --function new_pool --type-args $BASE_COIN_TYPE $QUOTE_COIN_TYPE --args $SUI_FEE_COIN_ID --gas-budget 10000000000 --json
-```
-After the pool is created, check the output and locate the object with the type `0xdee9::clob_v2::Pool<$BASE_COIN_TYPE, $QUOTE_COIN_TYPE>` (`$BASE_COIN_TYPE`, `$QUOTE_COIN_TYPE` - replace with the actual values) and assign the value from the `objectId` property to `$POOL_ID`.
-
-In this case, the pool is created with the default values for `REFERENCE_TAKER_FEE_RATE` and `REFERENCE_MAKER_REBATE_RATE` where the former one is `2_500_000` (0.25%) and the latter one is `1_500_000` (0.15%).
-
-In case you'd like to customize these values, you should use `create_customized_pool`:
-```
-public fun create_customized_pool<BaseAsset, QuoteAsset>(
-        tick_size: u64,
-        lot_size: u64,
-        taker_fee_rate: u64,
-        maker_rebate_rate: u64,
-        creation_fee: Coin<SUI>,
-        ctx: &mut TxContext,
-    )
-```
-
-### Create custodian account
-For limit orders we need to have custodian accounts (more details [here](https://docs.sui-deepbook.com/deepbook-sdk/trade-and-swap#2.1.2-create-custodian-account)):
-```
-sui client call --package $PACKAGE_ID  --module book --function new_custodian_account  --gas-budget 10000000000
-```
-In the publish output you should look for the object with `objectType` `0xdee9::custodian_v2::AccountCap` and assign the value `objectId` to the env variable `ACCOUNT1_CAP`.
-Repeat the same for the secondary account that we created previously (use `sui client switch --address <ADDRESS>`) and the output assign to ACCOUNT2_CAP.
-
-### Mint WBTC token
-Now we need to mint WBTC tokens. Switch to the address that you've used to publish the contract and run this command to mint tokens:
-```
-sui client call --function mint --module wbtc --package $PACKAGE_ID  --args $WBTC_TREASURY_CAP_ID "10000000000" $ACCOUNT_ID1 --gas-budget 10000000 --json
-```
-Re-run the same command but change `ACCOUNT_ID1` to `ACCOUNT_ID2`.
-Check the output and look for an object with `objectType` that has a value like this `String("0x2::coin::Coin<$PACKAGE_ID::wbtc::WBTC>")` and get the value of `objectId` and assign it ot `ACCOUNT1_WBTC_OBJECT_ID`.
-
-### Make deposits
-Now we need to make deposits (both base and quote) to `ACCOUNT1_CAP_ID` (for limit orders).
-First, prepare the `BASE_COIN_ID` variable by assigning the output of `sui client gas` (any of the values) and the run this command:
-```
-sui client call --package $PACKAGE_ID  --module book --function make_base_deposit  --args $POOL_ID $BASE_COIN_ID $ACCOUNT1_CAP_ID --type-args $BASE_COIN_TYPE $QUOTE_COIN_TYPE --gas-budget 10000000000 --json
-```
-
-Now deposit the quote coin:
-```
-sui client call --package $PACKAGE_ID  --module book --function make_quote_deposit  --args $POOL_ID $ACCOUNT1_WBTC_OBJECT_ID $ACCOUNT1_CAP_ID --type-args $BASE_COIN_TYPE $QUOTE_COIN_TYPE --gas-budget 10000000000 --json
-```
-The arguments strictly match the signature of the function that is called.
-
-### Place limit orders
-Let's place multiple limit orders:
-```
- sui client call --package $PACKAGE_ID  --module book --function place_limit_order  --args "$POOL_ID" 42 5000000000 200 0 true 1888824053000 0 $CLOCK_OBJECT_ID "$ACCOUNT1_CAP" --type-args $BASE_COIN_TYPE $QUOTE_COIN_TYPE --gas-budget 10000000000 --json
- 
- sui client call --package $PACKAGE_ID  --module book --function place_limit_order  --args "$POOL_ID" 42 5000000000 300 0 true 1888824053000 0 $CLOCK_OBJECT_ID "$ACCOUNT1_CAP" --type-args $BASE_COIN_TYPE $QUOTE_COIN_TYPE --gas-budget 10000000000 --json
- 
- sui client call --package $PACKAGE_ID  --module book --function place_limit_order  --args "$POOL_ID" 42 2000000000 1000 0 true 1888824053000 0 $CLOCK_OBJECT_ID "$ACCOUNT1_CAP" --type-args $BASE_COIN_TYPE $QUOTE_COIN_TYPE --gas-budget 10000000000 --json
- 
- sui client call --package $PACKAGE_ID  --module book --function place_limit_order  --args "$POOL_ID" 42 20000000000 1000 0 false 1888824053000 0 $CLOCK_OBJECT_ID "$ACCOUNT1_CAP" --type-args $BASE_COIN_TYPE $QUOTE_COIN_TYPE --gas-budget 10000000000 --json
-```
-where:
-- `1888824053000` is a timestamp somewhere in the future, to avoid order expiration for the sake of simplicity
-- `42` is an id of the order, can be any number.
-
-Notice that these commands are mostly the same except for the arguments for `priect`, `quantity` and `is_bid`.
-
-`is_bid` indicated whether you want to sell or buy assets. More details here: [2.1.4 Place Limit Order](https://docs.sui-deepbook.com/deepbook-sdk/trade-and-swap).
-
-### Place market order
-Now we need to place a market order to buy/sell assets. We are going to do this using our secondary account.
-
-First, switch to the secondary account:
-```
-sui client switch --address <ADDRESS>
-```
-
-Now place the order:
-```
-sui client call --package $PACKAGE_ID  --module book --function place_base_market_order  --args $POOL_ID $ACCOUNT2_CAP $SUI_COIN_ID 942 "false" $CLOCK_OBJECT_ID --type-args $BASE_COIN_TYPE $QUOTE_COIN_TYPE --gas-budget 10000000000 --json
-```
-where:
-- `942` is an id of the order, can be any number
-
-Check the output of this command and find the `balanceChanges` array where the balance changes will be listed, you should see the exchanged assets. Also, you can double-check this in the wallet app.
-The amount of tokens won't be precisly the number you expect because there is a deepbook fee, more details [here](https://docs.sui-deepbook.com/deepbook-fee-structure).
-
-More info about the market orders can be found [here](https://docs.sui-deepbook.com/deepbook-sdk/trade-and-swap#2.2-place-market-order).
-
-### Swap order
-Now let's try to run a swap order. 
-Re-run the commands the place limit orders (using the first account) and the switch back to the secondary account, and run the swap order:
-
-```
-sui client call --package $PACKAGE_ID  --module book --function swap_exact_base_for_quote  --args "$POOL_ID" 42 $ACCOUNT2_CAP 1500 $BASE_COIN_ID $CLOCK_OBJECT_ID --type-args $BASE_COIN_TYPE $QUOTE_COIN_TYPE --gas-budget 10000000000 --json
-```
-where:
-- `BASE_COIN_ID` is the id of the SUI coin, get the value from `sui client gas --json`
-- `42` is an id of the order, can be any number
-
-Check the output of this command and find the `balanceChanges` array where the balance changes will be listed, you should see the exchanged assets. Also, you can double-check this in the wallet app.
-
-### Withdrap from the account cap
-
-After you deposited either base or quote assets you can withdraw them back to your main address:
-
-#### withdraw base
-```
-sui client call --package $PACKAGE_ID  --module book --function withdraw_base --args "$POOL_ID" 100 $ACCOUNT2_CAP --type-args $BASE_COIN_TYPE $QUOTE_COIN_TYPE --gas-budget 10000000000 --json
-```
-
-#### withdraw quote
-```
-sui client call --package $PACKAGE_ID  --module book --function withdraw_quote --args "$POOL_ID" 100 $ACCOUNT2_CAP --type-args $BASE_COIN_TYPE $QUOTE_COIN_TYPE --gas-budget 10000000000 --json
-```

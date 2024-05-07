@@ -1,222 +1,231 @@
-/*
-Disclaimer: Use of Unaudited Code for Educational Purposes Only
-This code is provided strictly for educational purposes and has not undergone any formal security audit. 
-It may contain errors, vulnerabilities, or other issues that could pose risks to the integrity of your system or data.
+module food_chain::food_chain_system {
 
-By using this code, you acknowledge and agree that:
-    - No Warranty: The code is provided "as is" without any warranty of any kind, either express or implied. The entire risk as to the quality and performance of the code is with you.
-    - Educational Use Only: This code is intended solely for educational and learning purposes. It is not intended for use in any mission-critical or production systems.
-    - No Liability: In no event shall the authors or copyright holders be liable for any claim, damages, or other liability, whether in an action of contract, tort, or otherwise, arising from, out of, or in connection with the use or performance of this code.
-    - Security Risks: The code may not have been tested for security vulnerabilities. It is your responsibility to conduct a thorough security review before using this code in any sensitive or production environment.
-    - No Support: The authors of this code may not provide any support, assistance, or updates. You are using the code at your own risk and discretion.
-
-Before using this code, it is recommended to consult with a qualified professional and perform a comprehensive security assessment. By proceeding to use this code, you agree to assume all associated risks and responsibilities.
-*/
-
-#[lint_allow(self_transfer)]
-module dacade_deepbook::book {
-    use deepbook::clob_v2 as deepbook;
-    use deepbook::custodian_v2 as custodian;
+    // Imports
+    use sui::transfer;
     use sui::sui::SUI;
-    use sui::tx_context::{TxContext, Self};
-    use sui::coin::{Coin, Self};
-    use sui::balance::{Self};
-    use sui::transfer::Self;
-    use sui::clock::Clock;
+    use sui::coin::{Self, Coin};
+    use sui::clock::{Clock, timestamp_ms};
+    use sui::object::{Self, UID, ID};
+    use sui::balance::{Self, Balance};
+    use sui::tx_context::{TxContext, sender};
+    use sui::table::{Self, Table};
 
-    const FLOAT_SCALING: u64 = 1_000_000_000;
+    use std::option::{Option, none, some, borrow};
+    use std::string::{String};
+    use std::vector::{Self};
 
+    // Errors
+    const ERROR_INVALID_QUALITY: u64 = 0;
+    const ERROR_PRODUCT_OUT_OF_STOCK: u64 = 1;
+    const ERROR_INVALID_CAP: u64 = 2;
+    const ERROR_INSUFFICIENT_FUNDS: u64 = 3;
+    const ERROR_ORDER_NOT_SUBMITTED: u64 = 4;
+    const ERROR_WRONG_ADDRESS: u64 = 5;
+    const ERROR_TIME_IS_UP: u64 = 6;
+    const ERROR_INCORRECT_SUPPLIER: u64 = 7;
+    const ERROR_DISPUTE_FALSE: u64 = 8;
 
-    public fun new_pool<Base, Quote>(payment: &mut Coin<SUI>, ctx: &mut TxContext) {
-        let balance = coin::balance_mut(payment);
-        let fee = balance::split(balance, 100 * 1_000_000_000);
-        let coin = coin::from_balance(fee, ctx);
+    // Struct definitions
+    
+    // Product Struct
+    struct Product has key, store {
+        id: UID,
+        inner: ID,
+        supplier: address,
+        consumers: Table<address, Consumer>,
+        description: String,
+        quality: u64,
+        price: u64,
+        dispute: bool,
+        status: bool,
+        consumer: Option<address>,
+        order_submitted: bool,
+        created_at: u64,
+        deadline: u64,
+        payment: Balance<SUI>, // Added payment field
+    }
+    
+    struct ProductCap has key {
+        id: UID,
+        product_id: ID
+    }
+    
+    // Consumer Struct
+    struct Consumer has key, store {
+        id: UID,
+        product_id: ID,
+        supplier: address,
+        description: String,
+        requirements: vector<String>
+    }
+    
+    // Complaint Struct
+    struct Complaint has key, store {
+        id: UID,
+        consumer: address,
+        supplier: address,
+        reason: String,
+        decision: bool,
+    }
+    
+    struct AdminCap has key {id: UID}
 
-        deepbook::create_pool<Base, Quote>(
-            1 * FLOAT_SCALING,
-            1,
-            coin,
-            ctx
-        );
+    fun init(ctx: &mut TxContext) {
+        transfer::transfer(AdminCap{id: object::new(ctx)}, sender(ctx));
     }
 
-    public fun new_custodian_account(ctx: &mut TxContext) {
-        transfer::public_transfer(deepbook::create_account(ctx), tx_context::sender(ctx))
+    // Accessors
+    public fun get_product_description(product: &Product): String {
+        product.description
     }
 
-    public fun make_base_deposit<Base, Quote>(pool: &mut deepbook::Pool<Base, Quote>, coin: Coin<Base>, account_cap: &custodian::AccountCap) {
-        deepbook::deposit_base(pool, coin, account_cap)
+    public fun get_product_price(product: &Product): u64 {
+        product.price
     }
 
-    public fun make_quote_deposit<Base, Quote>(pool: &mut deepbook::Pool<Base, Quote>, coin: Coin<Quote>, account_cap: &custodian::AccountCap) {
-        deepbook::deposit_quote(pool, coin, account_cap)
+    public fun get_product_status(product: &Product): bool {
+        product.status
     }
 
-    public fun withdraw_base<BaseAsset, QuoteAsset>(
-        pool: &mut deepbook::Pool<BaseAsset, QuoteAsset>,
-        quantity: u64,
-        account_cap: &custodian::AccountCap,
+    public fun get_product_deadline(product: &Product): u64 {
+        product.deadline
+    }
+
+    // Public - Entry functions
+
+    // Create a new product for sale
+    public entry fun new_product(
+        c: &Clock, 
+        description_: String,
+        quality_: u64,
+        price_: u64, 
+        duration_: u64, 
         ctx: &mut TxContext
     ) {
-        let base = deepbook::withdraw_base(pool, quantity, account_cap, ctx);
-        transfer::public_transfer(base, tx_context::sender(ctx));
+        let id_ = object::new(ctx);
+        let inner_ = object::uid_to_inner(&id_);
+        let deadline_ = timestamp_ms(c) + duration_;
+
+        transfer::share_object(Product {
+            id: id_,
+            inner: inner_,
+            supplier: sender(ctx),
+            consumers: table::new(ctx),
+            description: description_,
+            quality: quality_,
+            price: price_,
+            dispute: false,
+            status: false,
+            consumer: none(),
+            order_submitted: false,
+            created_at: timestamp_ms(c),
+            deadline: deadline_,
+            payment: balance::zero(), // Initialize payment balance
+        });
+
+        transfer::transfer(ProductCap{id: object::new(ctx), product_id: inner_}, sender(ctx));
+    }
+    
+    public fun new_consumer(product: ID, description_: String, ctx: &mut TxContext) : Consumer {
+        let consumer = Consumer {
+            id: object::new(ctx),
+            product_id: product,
+            supplier: sender(ctx),
+            description: description_,
+            requirements: vector::empty()
+        };
+        consumer
     }
 
-    public fun withdraw_quote<BaseAsset, QuoteAsset>(
-        pool: &mut deepbook::Pool<BaseAsset, QuoteAsset>,
-        quantity: u64,
-        account_cap: &custodian::AccountCap,
-        ctx: &mut TxContext
-    ) {
-        let quote = deepbook::withdraw_quote(pool, quantity, account_cap, ctx);
-        transfer::public_transfer(quote, tx_context::sender(ctx));
+    public fun add_requirement(consumer: &mut Consumer, requirement: String) {
+        assert!(!vector::contains(&consumer.requirements, &requirement), ERROR_INVALID_QUALITY);
+        vector::push_back(&mut consumer.requirements, requirement);
     }
 
-    public fun place_limit_order<Base, Quote>(
-        pool: &mut deepbook::Pool<Base, Quote>,
-        client_order_id: u64,
-        price: u64, 
-        quantity: u64, 
-        self_matching_prevention: u8,
-        is_bid: bool,
-        expire_timestamp: u64,
-        restriction: u8,
-        clock: &Clock,
-        account_cap: &custodian::AccountCap,
-        ctx: &mut TxContext
-    ): (u64, u64, bool, u64) {
-        deepbook::place_limit_order(
-            pool, 
-            client_order_id, 
-            price, 
-            quantity, 
-            self_matching_prevention, 
-            is_bid, 
-            expire_timestamp, 
-            restriction, 
-            clock, 
-            account_cap, 
-            ctx
-        )
+    public fun order_product(product: &mut Product, consumer: Consumer, ctx: &mut TxContext) {
+        assert!(!product.status, ERROR_PRODUCT_OUT_OF_STOCK);
+        table::add(&mut product.consumers, sender(ctx), consumer);
     }
 
-    public fun place_base_market_order<Base, Quote>(
-        pool: &mut deepbook::Pool<Base, Quote>,
-        account_cap: &custodian::AccountCap,
-        base_coin: Coin<Base>,
-        client_order_id: u64,
-        is_bid: bool,
-        clock: &Clock,
-        ctx: &mut TxContext,
-    ) {
-        let quote_coin = coin::zero<Quote>(ctx);
-        let quantity = coin::value(&base_coin);
-        place_market_order(
-            pool,
-            account_cap,
-            client_order_id,
-            quantity,
-            is_bid,
-            base_coin,
-            quote_coin,
-            clock,
-            ctx
-        )
+    public fun choose_consumer(cap: &ProductCap, product: &mut Product, coin: Coin<SUI>, chosen: address) : Consumer {
+        assert!(cap.product_id == object::id(product), ERROR_INVALID_CAP);
+        assert!(coin::value(&coin) >= product.price, ERROR_INSUFFICIENT_FUNDS);
+
+        let consumer = table::remove(&mut product.consumers, chosen);
+        let payment = coin::into_balance(coin);
+        balance::join(&mut product.payment, payment);
+        product.status = true;
+        product.consumer = some(chosen);
+
+        consumer
     }
 
-    public fun place_quote_market_order<Base, Quote>(
-        pool: &mut deepbook::Pool<Base, Quote>,
-        account_cap: &custodian::AccountCap,
-        quote_coin: Coin<Quote>,
-        client_order_id: u64,
-        is_bid: bool,
-        clock: &Clock,
-        ctx: &mut TxContext,
-    ) {
-        let base_coin = coin::zero<Base>(ctx);
-        let quantity = coin::value(&quote_coin);
-        place_market_order(
-            pool,
-            account_cap,
-            client_order_id,
-            quantity,
-            is_bid,
-            base_coin,
-            quote_coin,
-            clock,
-            ctx
-        )
+    public fun submit_order(product: &mut Product, c: &Clock, ctx: &mut TxContext) {
+        assert!(timestamp_ms(c) < product.deadline, ERROR_TIME_IS_UP);
+        assert!(*borrow(&product.consumer) == sender(ctx), ERROR_WRONG_ADDRESS);
+        product.order_submitted = true;
     }
 
-    fun place_market_order<Base, Quote>(
-        pool: &mut deepbook::Pool<Base, Quote>,
-        account_cap: &custodian::AccountCap,
-        client_order_id: u64,
-        quantity: u64,
-        is_bid: bool,
-        base_coin: Coin<Base>,
-        quote_coin: Coin<Quote>,
-        clock: &Clock, // @0x6 hardcoded id of the Clock object
-        ctx: &mut TxContext,
-    ) {
-        let (base, quote) = deepbook::place_market_order(
-            pool, 
-            account_cap, 
-            client_order_id, 
-            quantity, 
-            is_bid, 
-            base_coin, 
-            quote_coin, 
-            clock, 
-            ctx
-        );
-        transfer::public_transfer(base, tx_context::sender(ctx));
-        transfer::public_transfer(quote, tx_context::sender(ctx));
+    public fun confirm_order(cap: &ProductCap, product: &mut Product, ctx: &mut TxContext) {
+        assert!(cap.product_id == object::id(product), ERROR_INVALID_CAP);
+        assert!(product.order_submitted, ERROR_ORDER_NOT_SUBMITTED);
+
+        let payment: Balance<SUI> = balance::withdraw_all(&mut product.payment); // Add type annotation
+        let coin: Coin<SUI> = coin::from_balance(payment, ctx); // Add type annotation
+
+        transfer::public_transfer(coin, *borrow(&product.consumer));
     }
 
-    public fun swap_exact_base_for_quote<Base, Quote>(
-        pool: &mut deepbook::Pool<Base, Quote>,
-        client_order_id: u64,
-        account_cap: &custodian::AccountCap,
-        quantity: u64,
-        base_coin: Coin<Base>,
-        clock: &Clock,
-        ctx: &mut TxContext
-    ) {
-        let quote_coin = coin::zero<Quote>(ctx);
-        let (base, quote, _) = deepbook::swap_exact_base_for_quote(
-            pool,
-            client_order_id,
-            account_cap,
-            quantity,
-            base_coin,
-            quote_coin,
-            clock,
-            ctx
-        );
-        transfer::public_transfer(base, tx_context::sender(ctx));
-        transfer::public_transfer(quote, tx_context::sender(ctx));
+    // Additional functions for handling complaints and dispute resolutions
+    public fun file_complaint(product: &mut Product, c:&Clock, reason: String, ctx: &mut TxContext) {
+        assert!(timestamp_ms(c) > product.deadline, ERROR_TIME_IS_UP); // Ensure that the complaint is filed after the product deadline
+        
+        let complainer = sender(ctx);
+        let supplier = product.supplier;
+        
+        // Ensure that the complaint is filed by either the consumer or the supplier
+         assert!(complainer == sender(ctx) || supplier == sender(ctx), ERROR_INCORRECT_SUPPLIER);
+
+        // Create the complaint
+        let complaint = Complaint{
+            id: object::new(ctx),
+            consumer: complainer,
+            supplier: supplier,
+            reason: reason,
+            decision: false,
+        };
+
+        // Mark the product as disputed
+        product.dispute = true;
+
+        transfer::share_object(complaint);
     }
 
-    public fun swap_exact_quote_for_base<Base, Quote>(
-        pool: &mut deepbook::Pool<Base, Quote>,
-        account_cap: &custodian::AccountCap,
-        quote_coin: Coin<Quote>,
-        client_order_id: u64,
-        quantity: u64,
-        clock: &Clock,
-        ctx: &mut TxContext,
-    ) {
-        let (base, quote, _) = deepbook::swap_exact_quote_for_base(
-            pool,
-            client_order_id,
-            account_cap,
-            quantity,
-            clock,
-            quote_coin,
-            ctx
-        );
-        transfer::public_transfer(base, tx_context::sender(ctx));
-        transfer::public_transfer(quote, tx_context::sender(ctx));
+    // Admin or arbitrator decides the outcome of a dispute
+    public fun resolve_dispute(_: &AdminCap, product: &mut Product, complaint: &mut Complaint, decision: bool, ctx: &mut TxContext) {
+        assert!(product.dispute, ERROR_DISPUTE_FALSE); // Ensure there is an active dispute
+        
+        // Decision process
+        if (decision) {
+            // If decision is true, transfer the payment to the consumer
+            let payment: Balance<SUI> = balance::withdraw_all(&mut product.payment); // Add type annotation
+            let coin: Coin<SUI> = coin::from_balance(payment, ctx); // Add type annotation
+            transfer::public_transfer(coin, complaint.consumer);
+        } else {
+            // If decision is false, return the payment to the supplier
+            let payment: Balance<SUI> = balance::withdraw_all(&mut product.payment); // Add type annotation
+            let coin: Coin<SUI> = coin::from_balance(payment, ctx); // Add type annotation
+            transfer::public_transfer(coin, product.supplier);
+            
+            // Close the dispute
+            product.dispute = false;
+            complaint.decision = decision;
+        }
+    }
+
+    // Helper function to add requirements to a consumer
+    public fun add_requirements(consumer: &mut Consumer, requirements: String) {
+        assert!(!vector::contains(&consumer.requirements, &requirements), ERROR_INVALID_QUALITY);
+        vector::push_back(&mut consumer.requirements, requirements);
     }
 }
