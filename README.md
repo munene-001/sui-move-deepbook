@@ -1,5 +1,4 @@
 ## Food Chain System Smart Contract Overview
-
 The "food_chain_system" module is a smart contract written in the Move programming language, designed to facilitate a decentralized food chain system. It introduces functionalities for managing products, consumers, complaints, and dispute resolutions within the food supply chain. Below is a detailed documentation of its components, purpose, features, setup, and interaction.
 
 ## Purpose:
