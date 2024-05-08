@@ -2,17 +2,15 @@ module food_chain::food_chain_system {
 
     // Imports
     use sui::transfer;
-    use sui::sui::SUI;
-    use sui::coin::{Self, Coin};
+    use sui::coin::{Coin, value};
     use sui::clock::{Clock, timestamp_ms};
-    use sui::object::{Self, UID, ID};
-    use sui::balance::{Self, Balance};
+    use sui::object::{self, UID, ID};
+    use sui::balance::{Balance, withdraw_all, zero};
     use sui::tx_context::{TxContext, sender};
-    use sui::table::{Self, Table};
-
-    use std::option::{Option, none, some, borrow};
-    use std::string::{String};
-    use std::vector::{Self};
+    use sui::table::{self, Table};
+    use std::option::{Option, none, some};
+    use std::string::String;
+    use std::vector::{Vector, empty, contains, push_back};
 
     // Errors
     const ERROR_INVALID_QUALITY: u64 = 0;
@@ -28,13 +26,12 @@ module food_chain::food_chain_system {
     // Struct definitions
     
     // Product Struct
-    struct Product has key, store {
+    struct Product {
         id: UID,
         inner: ID,
         supplier: address,
         consumers: Table<address, Consumer>,
         description: String,
-        quality: u64,
         price: u64,
         dispute: bool,
         status: bool,
@@ -42,25 +39,25 @@ module food_chain::food_chain_system {
         order_submitted: bool,
         created_at: u64,
         deadline: u64,
-        payment: Balance<SUI>, // Added payment field
+        payment: Balance<SUI>,
     }
     
-    struct ProductCap has key {
+    struct ProductCap {
         id: UID,
         product_id: ID
     }
     
     // Consumer Struct
-    struct Consumer has key, store {
+    struct Consumer {
         id: UID,
         product_id: ID,
         supplier: address,
         description: String,
-        requirements: vector<String>
+        requirements: Vector<String>
     }
     
     // Complaint Struct
-    struct Complaint has key, store {
+    struct Complaint {
         id: UID,
         consumer: address,
         supplier: address,
@@ -68,10 +65,10 @@ module food_chain::food_chain_system {
         decision: bool,
     }
     
-    struct AdminCap has key {id: UID}
+    struct AdminCap { id: UID }
 
     fun init(ctx: &mut TxContext) {
-        transfer::transfer(AdminCap{id: object::new(ctx)}, sender(ctx));
+        transfer::transfer(AdminCap { id: object::new(ctx) }, sender(ctx));
     }
 
     // Accessors
@@ -112,7 +109,6 @@ module food_chain::food_chain_system {
             supplier: sender(ctx),
             consumers: table::new(ctx),
             description: description_,
-            quality: quality_,
             price: price_,
             dispute: false,
             status: false,
@@ -120,10 +116,10 @@ module food_chain::food_chain_system {
             order_submitted: false,
             created_at: timestamp_ms(c),
             deadline: deadline_,
-            payment: balance::zero(), // Initialize payment balance
+            payment: balance::zero(),
         });
 
-        transfer::transfer(ProductCap{id: object::new(ctx), product_id: inner_}, sender(ctx));
+        transfer::transfer(ProductCap { id: object::new(ctx), product_id: inner_ }, sender(ctx));
     }
     
     public fun new_consumer(product: ID, description_: String, ctx: &mut TxContext) : Consumer {
@@ -149,10 +145,10 @@ module food_chain::food_chain_system {
 
     public fun choose_consumer(cap: &ProductCap, product: &mut Product, coin: Coin<SUI>, chosen: address) : Consumer {
         assert!(cap.product_id == object::id(product), ERROR_INVALID_CAP);
-        assert!(coin::value(&coin) >= product.price, ERROR_INSUFFICIENT_FUNDS);
+        assert!(value(&coin) >= product.price, ERROR_INSUFFICIENT_FUNDS);
 
         let consumer = table::remove(&mut product.consumers, chosen);
-        let payment = coin::into_balance(coin);
+        let payment = withdraw_all(&mut product.payment);
         balance::join(&mut product.payment, payment);
         product.status = true;
         product.consumer = some(chosen);
@@ -170,24 +166,22 @@ module food_chain::food_chain_system {
         assert!(cap.product_id == object::id(product), ERROR_INVALID_CAP);
         assert!(product.order_submitted, ERROR_ORDER_NOT_SUBMITTED);
 
-        let payment: Balance<SUI> = balance::withdraw_all(&mut product.payment); // Add type annotation
-        let coin: Coin<SUI> = coin::from_balance(payment, ctx); // Add type annotation
+        let payment: Balance<SUI> = withdraw_all(&mut product.payment);
+        let coin: Coin<SUI> = coin::from_balance(payment, ctx);
 
         transfer::public_transfer(coin, *borrow(&product.consumer));
     }
 
     // Additional functions for handling complaints and dispute resolutions
     public fun file_complaint(product: &mut Product, c:&Clock, reason: String, ctx: &mut TxContext) {
-        assert!(timestamp_ms(c) > product.deadline, ERROR_TIME_IS_UP); // Ensure that the complaint is filed after the product deadline
+        assert!(timestamp_ms(c) > product.deadline, ERROR_TIME_IS_UP);
         
         let complainer = sender(ctx);
         let supplier = product.supplier;
         
-        // Ensure that the complaint is filed by either the consumer or the supplier
-         assert!(complainer == sender(ctx) || supplier == sender(ctx), ERROR_INCORRECT_SUPPLIER);
+        assert!(complainer == sender(ctx) || supplier == sender(ctx), ERROR_INCORRECT_SUPPLIER);
 
-        // Create the complaint
-        let complaint = Complaint{
+        let complaint = Complaint {
             id: object::new(ctx),
             consumer: complainer,
             supplier: supplier,
@@ -195,29 +189,23 @@ module food_chain::food_chain_system {
             decision: false,
         };
 
-        // Mark the product as disputed
         product.dispute = true;
 
         transfer::share_object(complaint);
     }
 
-    // Admin or arbitrator decides the outcome of a dispute
     public fun resolve_dispute(_: &AdminCap, product: &mut Product, complaint: &mut Complaint, decision: bool, ctx: &mut TxContext) {
-        assert!(product.dispute, ERROR_DISPUTE_FALSE); // Ensure there is an active dispute
+        assert!(product.dispute, ERROR_DISPUTE_FALSE);
         
-        // Decision process
-        if (decision) {
-            // If decision is true, transfer the payment to the consumer
-            let payment: Balance<SUI> = balance::withdraw_all(&mut product.payment); // Add type annotation
-            let coin: Coin<SUI> = coin::from_balance(payment, ctx); // Add type annotation
+        if decision {
+            let payment: Balance<SUI> = withdraw_all(&mut product.payment);
+            let coin: Coin<SUI> = coin::from_balance(payment, ctx);
             transfer::public_transfer(coin, complaint.consumer);
         } else {
-            // If decision is false, return the payment to the supplier
-            let payment: Balance<SUI> = balance::withdraw_all(&mut product.payment); // Add type annotation
-            let coin: Coin<SUI> = coin::from_balance(payment, ctx); // Add type annotation
+            let payment: Balance<SUI> = withdraw_all(&mut product.payment);
+            let coin: Coin<SUI> = coin::from_balance(payment, ctx);
             transfer::public_transfer(coin, product.supplier);
             
-            // Close the dispute
             product.dispute = false;
             complaint.decision = decision;
         }
